@@ -1,0 +1,44 @@
+<html lang="en"><body><a href="index.html"><h1>BumbleByte Software</h1></a><h2>Independent Software Contracting</h2><h1>Enjoy the View</h1><blockquote>
+<p>Aimed at relatively new Scala developers or those unfamiliar with Scala collection performance outside the usual <code>List</code> or <code>Seq</code> types.</p>
+</blockquote>
+<!-- truncate -->
+<p>Most of the common collection types in Scala are implemented strictly; this means that at all times every element of the collection is calculated and stored in memory. This can have performance impacts if our collections come from expensive operations, contain a high number of objects, or contain particularly large objects. Some methods such as <code>find</code> or <code>head</code> don’t need to read every element of the collection and so using strict collections isn't always necessary. A good example of a collection that benefits from being lazy is the linked list (Scala's <code>List</code> type). Linked lists are implemented as an element and a pointer to the next element, instead we can make the collection lazy by storing a function for the next pointer instead. See the example below for how this works.</p>
+<pre><code>strictList = 1 -&gt; 2 -&gt; 3 -&gt; 4 -&gt; 5
+lazyList   = 1 -&gt; (n =&gt; n + 1)
+</code></pre>
+<p>Lists in Scala are not lazy by default and so if we want this behaviour we'll actually need to use <code>List</code>'s sister class <code>LazyList</code>. This type works a lot like a list but instead the list is stored as an element and a &quot;thunk&quot;, a function stored on the heap which can be used to calculate the next element. Now when we use our <code>find</code> or <code>head</code> operations we only calculate as many elements as we need rather than creating elements unnecessarily. It also opens up some interesting algorithm designs that make use of infinite lists. For example, implementing a <code>zipWithIndex</code> function would look like this.</p>
+<pre><code class="language-scala">scala&gt; LazyList.range(0, Int.MaxValue).zip(&quot;a cool example&quot;).toList
+val res0: List[(Int, Char)] = List((0,a), (1, ), (2,c), (3,o), (4,o), (5,l), (6, ), (7,e), (8,x), (9,a), (10,m), (11,p), (12,l), (13,e))
+</code></pre>
+<p>Notice how the initial <code>LazyList.range(0, Int.MaxValue)</code> goes all the way to the maximum integer. If you replaced the <code>LazyList</code> with a regular strict <code>List</code> you’ll find the program takes a lot longer to complete (if it even does at all).</p>
+<blockquote>
+<p>Lazy lists actually retain their elements after they're calculated so an infinitely sized <code>LazyList</code> can still risk overrunning your heap memory! If you want to discard elements you'll need to work recursively (with tail call optimization)</p>
+</blockquote>
+<p>What if we're not working with a lazy collection? We can actually work with any collection lazily by using a <code>View</code>. You can summon a view for a collection by using <code>.view</code> and continue to use the familiar collection traversal methods. The upside is that every operation we do will be evaluated lazily just like the lazy list!</p>
+<p>This example shows how the order of operations differs between a strict list and a lazy view on the same collection.</p>
+<pre><code class="language-scala">val normalList = List.range(0, 2)
+val viewedList = normalList.view
+
+val tappedList = normalList.tapEach(_ =&gt; println(&quot;Operation A&quot;)).tapEach(_ =&gt; println(&quot;Operation B&quot;))
+val tappedView = viewedList.tapEach(_ =&gt; println(&quot;Operation A&quot;)).tapEach(_ =&gt; println(&quot;Operation B&quot;))
+
+println(&quot;Not done yet?&quot;)
+// realise the view
+tappedView.toList
+</code></pre>
+<p>Run this snippet and you'll see something interesting.</p>
+<pre><code>Operation A
+Operation A
+Operation B
+Operation B
+Not done yet?
+Operation A
+Operation B
+Operation A
+Operation B
+</code></pre>
+<p>The strict list evaluates the entire list first for the first <code>tapEach</code>, and then evaluates it again for the second <code>tapEach</code> (meaning we've actually crossed the whole list twice). In the view however the operations are actually combined making our update more efficient. Similarly we actually don't see the output of the view until we force it back into a list later on (sometimes referred to as &quot;realising&quot; the list). A view isn't always the right choice for the job. Views are great for traversal but don't support functions that might access the collection in a random order (for example, sorting). Storing unevaluated thunks can also sometimes be more costly then simply evaluating the collection to begin with, for example situations where we might build a lot of views in one go.</p>
+<footer>
+BumbleByte Software Ltd is a company registered in England and Wales. Registered number: 16009956. Registered
+office: 3rd Floor, 86-90 Paul Street, London, United Kingdom, EC2A 4NE.
+</footer></body></html>

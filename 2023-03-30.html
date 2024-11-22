@@ -1,0 +1,141 @@
+<html lang="en"><body><a href="index.html"><h1>BumbleByte Software</h1></a><h2>Independent Software Contracting</h2><h1>Custom Request DSLs with Http4s</h1><blockquote>
+<p>How <code>Http4s</code> leverages Scala’s powerful pattern-matching features, and how you can use them too.</p>
+</blockquote>
+<!-- truncate -->
+<p>I’ve recently played around with <code>Http4s</code>’s routing DSL and added some custom mechanics of my own.
+Sometimes we want to access request information generically independent if the route’s normal purpose. <code>Http4s</code>'
+<code>AuthedRoutes</code> serves as a great example for this.</p>
+<pre><code class="language-mdoc:scala">val normal: HttpRoutes[IO] = HttpRoutes.of {
+  case GET -&gt; / &quot;user&quot; / UserId(user) / &quot;resource&quot; 
+}
+
+val authed: AuthedRoutes[UserId, IO] = AuthedRoutes.of {
+  case GET -&gt; / &quot;user&quot; / &quot;resource&quot; as user
+}
+</code></pre>
+<p>The second route shows an example of using some new DSL syntax. That small <code>as user</code> at the end of the second route
+definition does a lot of heavy lifting around user authentication. Even better as it modifies the route type itself we
+can't forget to add authentication to a route (which we might if added auth route by route).</p>
+<p>For my change I will focus on a relatively neutral change that works with the normal <code>Http4s</code> request and response
+types. Let’s work with a simple requirement.</p>
+<blockquote>
+<p>Modify the route’s behaviour based on the <code>User-Agent</code> of the caller.</p>
+</blockquote>
+<p>How might that look? Let’s sketch out a possible DSL.</p>
+<pre><code class="language-mdoc:scala">HttpRoutes.of[IO] {
+  case Service.Distributor using GET -&gt; Root / &quot;resource&quot; / IntVar(id) =&gt;
+}
+</code></pre>
+<p>To understand how we might add this we need to explore how <code>Http4s</code> cleverly uses Scala’s pattern match system. When we
+pattern match on a case class Scala invokes a method called <code>unapply</code> to decide if the given value “matches”. Typically,
+that method might look something like this.</p>
+<pre><code class="language-mdoc:scala">object Foo {
+  def unapply(foo: Foo): Option[Int]
+}
+</code></pre>
+<p>In this case the implementation knows how to decompose a <code>Foo</code> into a <code>Int</code>, by using the class' <code>foo</code> field. Sometimes
+we can't access a field like that (for example, an ADT) and so the optional return type allows us to indicate the match
+failed. This method doesn't have to be synthetic and Scala allows us to define our own custom <code>unapply</code> matchers, which
+Scala refers to as <a href="https://docs.scala-lang.org/tour/extractor-objects.html">extractor objects</a>.</p>
+<p><code>Http4s</code> itself has some great examples of when we might want to use extractors. The status matcher <code>Succesful</code> matches
+response statuses within the 2xx range, with similar matchers for 4xx and 5xx too. This showcases the first style of
+matcher — a way of grouping similar terms in a match.</p>
+<p>You can nest Scala’s matchers in the same way that you can nest data. For example;</p>
+<pre><code class="language-mdoc:scala">  case Right(Some(3)) =&gt;
+   //   ^     ^
+   //   |     |_ Then it applies the `Option` matcher to the result.
+   //   |
+   //   |_ First applies the `Either` matcher
+</code></pre>
+<p>This nesting also powers the familiar list matcher.</p>
+<pre><code class="language-mdoc:scala">  case 1 :: 2 :: Nil =&gt;
+  // really looks like
+  case ::(1, ::(2, ::(3, ::(Nil))) =&gt; 
+</code></pre>
+<p>This syntax eliminates the normal bracket syntax see in favour of something more readable. Seeing this you might see how
+the <code>Http4s</code> DSL takes shape. Using DSL objects (made available via the <code>Htp4sDSL</code>) trait we can string a series of
+matchers along to define our expected request structure. Checking the source code gives us an idea on how to structure
+our own custom matcher.</p>
+<p>The first component of a <code>Http4s</code> route:</p>
+<pre><code class="language-mdoc:scala">object -&gt; {
+
+  /** HttpMethod extractor:
+    * {{{
+    *   (request.method, Path(request.path)) match {
+    *     case Method.GET -&gt; Root / &quot;test.json&quot; =&gt; ...
+    * }}}
+    */
+  def unapply[F[_]](req: Request[F]): Some[(Method, Path)] = ...
+}
+</code></pre>
+<p>It takes as input the inbound request itself and outputs two chunks split from the request; the method and the path.
+Through the same syntax as <code>::</code> that we saw earlier; Scala can match the request as a method on the left and a path on
+the
+right. Scala also allows us to match against specific values, so we can further refine our match with an exact method.
+The path however gets fed to another <code>Path</code> matcher, which decomposes the value further.</p>
+<pre><code class="language-modc:scala">object / {
+  def unapply(path: Path): Option[(Path, String)] = ...
+}
+</code></pre>
+<p>This path matcher consumes a <code>Path</code> and splits to a <code>String</code> component on its right-hand side. The left-hand side
+returns another <code>Path</code> so we can decompose the path string as much as we need to.</p>
+<p>You should see a pattern emerging, and we can start implementing our own. Let’s revisit our desired syntax.</p>
+<pre><code class="language-mdoc:scala">HttpRoutes.of[IO] {
+  case Service.Distributor using GET -&gt; Root / &quot;resource&quot; / IntVar(id) =&gt;
+}
+</code></pre>
+<p>We can start building our matcher by looking at our preferred inputs and outputs. In this case we will need:</p>
+<pre><code class="language-mdoc:scala">Input:  Request[IO]
+Output: (Service , Request[IO])
+</code></pre>
+<p>It takes a request and returns it plus a newly created <code>Service</code> object. Returning the request enables us to continue
+matching on it down the line. A trivial implementation looks a little like this;</p>
+<script src="https://scastie.scala-lang.org/s5swyEcORHGz0wYU67AZ4w.js"></script>
+<blockquote>
+<p>Notice the <code>unapply</code> method actually has a generic type parameter. Pattern matches do not support type parameters so
+if you include them they must be inferred from the matcher input.</p>
+</blockquote>
+<p>The logic here could become more complex if we wanted it to, for example we could extract a specific user-agent version
+too. Like <code>AuthedRoutes</code> the best syntax additions are obvious and limited. By changing the order of the outputs we
+could move our syntax the end of the match rather than the front. Experimenting with the values you extract in your
+match brings up some interesting possibilities. Take <code>Http4s</code>' <code>-&gt;&gt;</code> matcher as an example.</p>
+<pre><code class="language-modc:scala">  /** Extractor to match an http resource and then enumerate all supported methods:
+    * {{{
+    *   (request.method, Path(request.path)) match {
+    *     case withMethod -&gt;&gt; Root / &quot;test.json&quot; =&gt; withMethod {
+    *       case Method.GET =&gt; ...
+    *       case Method.POST =&gt; ...
+    * }}}
+    *
+    * Returns an error response if the method is not matched, in accordance with [[https://datatracker.ietf.org/doc/html/rfc7231#section-4.1 RFC7231]]
+    */
+  def unapply[F[_]: Applicative](
+      req: Request[F]
+  ): Some[(PartialFunction[Method, F[Response[F]]] =&gt; F[Response[F]], Path)] = ...
+</code></pre>
+<p>Returning a partial-function yields control back to the caller, who can add their own custom behaviour. This allows for
+some powerful DSLs that can make defining request-dependent service behaviour a breeze.</p>
+<p>The big question is… <em>should you?</em> This technique can help simplify a lot of code, but it can make
+it worse too. Common drawbacks and criticisms of custom DSLs include;</p>
+<ul>
+<li>Confusing or pointlessly obtuse syntax (for example, <code>|@|</code> from cats).</li>
+<li>They can hide too much. Subtle behaviours introduced through syntax can feel “magic”.</li>
+<li>Newcomers need to learn your syntax on top of a language they might not know already.</li>
+</ul>
+<p>You and your team decide how far you want to take it. A part of the art of software development includes deciding when
+to use these kinds of techniques.</p>
+<blockquote>
+<p>“Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away.”
+― Antoine de Saint-Exupéry</p>
+</blockquote>
+<p>Even small uses can benefit from custom matchers, for example this…</p>
+<pre><code class="language-mdoc:scala">  case Left(Some(event)) if event.timestamp &gt; cutOffTime =&gt;
+</code></pre>
+<p>…into this…</p>
+<pre><code class="language-mdoc:scala">  case LiveEvent(event) =&gt;
+</code></pre>
+<p>Which reduces cramped matchers into something simple and self-documenting.</p>
+<footer>
+BumbleByte Software Ltd is a company registered in England and Wales. Registered number: 16009956. Registered
+office: 3rd Floor, 86-90 Paul Street, London, United Kingdom, EC2A 4NE.
+</footer></body></html>
