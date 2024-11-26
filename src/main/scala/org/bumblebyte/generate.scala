@@ -4,7 +4,6 @@ import org.commonmark.ext.front.matter.YamlFrontMatterExtension
 import org.commonmark.ext.front.matter.YamlFrontMatterVisitor
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.html.HtmlRenderer
-import os.Path
 import scalatags.Text
 import scalatags.Text.all.*
 
@@ -27,9 +26,9 @@ def generate(): Unit =
     val metadata = new YamlFrontMatterVisitor().tap(node.accept).pipe(_.getData)
     val html     = renderer.render(node)
 
-    val publishedDate = metadata.get("date").getFirst
+    val publishedDate = Option(metadata.get("date")).fold(sys.error(s"$path had no `publishedDate`"))(_.getFirst)
 
-    val file = Templates.base(Seq(h1(path.baseName), raw(html)))
+    val file = Templates.base(path.baseName, Seq(h1(path.baseName), raw(html)))
     os.write.over(os.pwd / s"$publishedDate.html", file.render)
     path.baseName -> s"$publishedDate.html"
   }
@@ -43,9 +42,8 @@ def generate(): Unit =
   )
 
   val `index.html` =
-    s"""
-       |<!DOCTYPE html>
-       |${Templates.base(index).render}
+    s"""<!DOCTYPE html>
+       |${Templates.base("Home", index).render}
        |""".stripMargin
 
   os.write.over(os.pwd / "index.html", `index.html`)

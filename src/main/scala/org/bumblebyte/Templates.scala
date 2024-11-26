@@ -1,6 +1,7 @@
 package org.bumblebyte
 
 import scalatags.Text.all.*
+import scalatags.Text.tags2
 
 object Templates:
 
@@ -10,9 +11,14 @@ object Templates:
       |office: 3rd Floor, 86-90 Paul Street, London, United Kingdom, EC2A 4NE.
       |""".stripMargin
 
-  def base(contents: Seq[Frag]): Frag =
+  def base(pageName: String, contents: Seq[Frag]): Frag =
     html(
       lang := "en",
+      head(
+        meta(name := "copyright", content := "© 2024 Your Name"),
+        meta(name := "license", content   := "https://creativecommons.org/licenses/by-nc-nd/4.0/"),
+        tags2.title(pageName)
+      ),
       body(a(href := "index.html")(h1("BumbleByte Software")), h2("Independent Software Contracting"))(contents)(
         footer(LegalDisclaimer)
       )
